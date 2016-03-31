@@ -49,7 +49,8 @@
 #define GSL_STATUS_FW 0x80
 #define GSL_STATUS_TOUCH 0x00
 
-#define GSL_PWR_GPIO "power"
+#define GSL_INT_GPIO "gsl irq"
+#define GSL_PWR_GPIO "gsl reset"
 
 #define GSL_MAX_CONTACTS 10
 #define GSL_MAX_AXIS 0xfff
@@ -96,6 +97,7 @@ struct gsl_ts_data {
 	struct i2c_client *client;
 	struct input_dev *input;
 	struct gpio_desc *gpio;
+	struct gpio_desc *gpio_int;
 	char fw_name[GSL_FW_NAME_MAXLEN];
 	
 	enum gsl_ts_state state;
@@ -503,16 +505,29 @@ static int gsl_ts_probe(struct i2c_client *client, const struct i2c_device_id *i
 		goto release;
 	}
 
-	if (client->irq <= 0) {
-		dev_err(&client->dev, "%s: missing IRQ configuration\n", __func__);
-		error = -ENODEV;
-		goto release;
-	}
-	
 	ts = devm_kzalloc(&client->dev, sizeof(struct gsl_ts_data), GFP_KERNEL);
 	if (!ts) {
 		error = -ENOMEM;
 		goto release;
+	}
+
+	if (client->irq <= 0) {
+		ts->gpio_int = devm_gpiod_get_index(&client->dev, GSL_INT_GPIO, 1);
+
+		if (IS_ERR(ts->gpio_int)) {
+			dev_err(&client->dev, "%s: error obtaining IRQ pin GPIO resource\n", __func__);
+			error = PTR_ERR(ts->gpio);
+			goto release;
+		}
+
+		gpiod_direction_input(ts->gpio_int);
+		client->irq = gpiod_to_irq(ts->gpio_int);
+
+		if (client->irq <= 0) {
+			dev_err(&client->dev, "%s: missing IRQ configuration\n", __func__);
+			error = -ENODEV;
+			goto release;
+		}
 	}
 	
 	ts->client = client;
